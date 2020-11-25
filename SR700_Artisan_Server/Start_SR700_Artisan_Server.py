@@ -16,7 +16,8 @@ import Pyro4.naming
 import os
 import subprocess as sb
 import argparse
-
+import serial
+import re
 
 import signal
 import time
@@ -34,7 +35,8 @@ class Roaster(object):
                 max_31865_gpio_miso=9,
                 max_31865_gpio_mosi=10,
                 max_31865_gpio_clk=11,
-                kp=0.4, ki=0.0075, kd=0.9, use_internal_pid=True):
+                kp=0.4, ki=0.0075, kd=0.9, use_internal_pid=True,
+                use_serial=False,serial_name="", serial_port=0):
 
         """Creates a freshroastsr700 object passing in methods included in this
         class."""
@@ -43,6 +45,9 @@ class Roaster(object):
         self.use_max31865=use_max31865
         self.temp_manual_mode=False
         self.fan_manual_mode=False
+        self.use_serial=use_serial
+        self.serial_name=serial_name
+        self.serial_port=serial_port
         self.roaster = SR700Phidget(
 	        use_phidget_temp=use_phidget_temp,
                 phidget_use_hub=phidget_use_hub,
@@ -59,8 +64,12 @@ class Roaster(object):
                 ext_sw_heater_drive= True if not use_internal_pid else False,
                 kp=kp,
                 ki=ki,
-                kd=kd)
-
+                kd=kd,
+                use_serial=use_serial,serial_name=serial_name, serial_port=serial_port
+                )
+        self.termoserial = serial.Serial(self.serial_name, self.serial_port)
+        
+        self.current_temp_serial = 24.0
 
     def enable_temp_manual_mode(self):
         self.temp_manual_mode=True
@@ -73,6 +82,13 @@ class Roaster(object):
 
     def disable_fan_manual_mode(self):
         self.fan_manual_mode=False
+        
+    def get_serial_temp(self):
+        self.termoserial.flushInput()
+        getVal=self.termoserial.readline()
+        getVal=re.findall(r"[-+]?\d*\.\d+|\d+", getVal)
+        self.current_temp_serial = getVal[1]
+        return self.current_temp_serial
 
     def update_data(self):
         """This is a method that will be called every time a packet is opened
@@ -166,6 +182,8 @@ class Roaster(object):
             bt=self.roaster.current_temp_phidget
         elif self.use_max31865:
             bt=self.roaster.current_temp_max31865
+        elif self.use_serial:
+            bt=self.roaster.current_temp_serial
         else:
             bt=et #in normal mode we have only the sr700 reading
 
@@ -201,7 +219,7 @@ def main():
    |_____/ \___|_|    \_/ \___|_|
    ''')
 
-        print('SR700 Artisan Server - Luca Pinello 2019 (@lucapinello)\n\n')
+        print('SR700 Artisan Server - Luca Pinello 2020 (@lucapinello)\n\n')
         print('Send bugs, suggestions or *green coffee* to lucapinello AT gmail DOT com\n')
 
         signal.signal(signal.SIGINT, signal_handler)
@@ -210,7 +228,7 @@ def main():
 
         parser.add_argument('--enable_extension', type=str, help='Running mode: phidget_simple,\
         phidget_hub,max31865 if not specified no external sensor will be used,',
-        default='simple',choices=['phidget_simple','phidget_hub', 'max31865'] )
+        default='simple',choices=['phidget_simple','phidget_hub', 'max31865', 'serial'] )
         parser.add_argument('--pid_mode', type=str, help='PID mode: internal,\
         artisan, if not specified the internal PID is used,',
         default='internal',choices=['internal','artisan'] )
@@ -223,6 +241,8 @@ def main():
         parser.add_argument('--max_31865_gpio_miso',  type=int,  default=9)
         parser.add_argument('--max_31865_gpio_mosi',  type=int,  default=10)
         parser.add_argument('--max_31865_gpio_clk',  type=int,  default=11)
+        parser.add_argument('--serial_name',  type=str,  default='/dev/tty.wchusbserial1410')
+        parser.add_argument('--serial_port',  type=int,  default=115200)
 
 
         args = parser.parse_args()
@@ -232,6 +252,7 @@ def main():
 
         use_max31865=False
         use_phidget_temp=False
+        use_serial=False
 
         if args.enable_extension=='phidget_simple' or args.enable_extension=='phidget_hub':
 
@@ -248,6 +269,12 @@ def main():
             kp=assign_pid_param(args.kp,0.4)
             ki=assign_pid_param(args.ki,0.0075)
             kd=assign_pid_param(args.kd,0.9)
+        elif args.enable_extension=='serial':
+            use_serial=True
+            use_phidget_temp=False
+            kp=assign_pid_param(args.kp,0.06)
+            ki=assign_pid_param(args.ki,0.0075)
+            kd=assign_pid_param(args.kd,0.01)
         else:
             use_phidget_temp=False
 
@@ -306,7 +333,10 @@ def main():
                     max_31865_gpio_miso=args.max_31865_gpio_miso,
                     max_31865_gpio_mosi=args.max_31865_gpio_mosi,
                     max_31865_gpio_clk=args.max_31865_gpio_clk,
-                    kp=kp,ki=ki,kd=kd, use_internal_pid=use_internal_pid)
+                    kp=kp,ki=ki,kd=kd, use_internal_pid=use_internal_pid,
+                    use_serial=use_serial,
+                    serial_name=args.serial_name,
+                    serial_port=args.serial_port)
 
         r.roaster.log_info=False
 
